@@ -1124,7 +1124,8 @@ class StockAnalyzer:
 if __name__ == "__main__":
     # 正确的股票代码示例
     stock_info = {
-        '上证指数': 'sh000001'
+        '上证指数': 'sh000001',
+        '洛阳钼业'：'sh603993'
     }
 
     print("开始股票技术分析...")
