@@ -70,7 +70,7 @@ stock_info = {
 python main.py
 ```
 
-3. 分析报告将自动生成并保存在`public/index.html`路径下
+3. 分析报告将自动生成并按日期保存在`public/年-月-日/index.html`和`public/年-月-日/index.md`路径下
 
 ## 技术架构
 

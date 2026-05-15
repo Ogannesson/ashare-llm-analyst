@@ -1,6 +1,8 @@
 import base64
 import os
+import re
 from datetime import datetime
+from html import unescape
 from io import BytesIO
 from string import Template
 import matplotlib.pyplot as plt
@@ -124,11 +126,13 @@ class StockAnalyzer:
 
         # 从环境变量获取API密钥和基础URL
         self.llm_api_key = llm_api_key or os.environ.get('LLM_API_KEY')
+        #self.llm_api_key = "sk-844750b2bee44f259d4ef0fb9e4fcfd4"
         self.llm_base_url = llm_base_url or os.environ.get('LLM_BASE_URL')
         self.llm_model = llm_model or os.environ.get('LLM_MODEL')
 
         # 初始化llm分析器
         self.llm = LLMAnalyzer(self.llm_api_key, self.llm_base_url, self.llm_model) if self.llm_api_key else None
+        self.analysis_cache = {}
 
     def get_stock_name(self, code):
         """根据股票代码获取股票名称"""
@@ -838,6 +842,117 @@ class StockAnalyzer:
         else:
             return str(content)
 
+    def _get_analysis_data(self, code):
+        """获取并缓存单只股票的分析数据，避免生成多种报告时重复调用AI。"""
+        if code not in self.analysis_cache:
+            self.analysis_cache[code] = self.generate_analysis_data(code)
+        return self.analysis_cache[code]
+
+    def _html_fragment_to_markdown_text(self, content):
+        """将AI返回的简单HTML片段转成适合Markdown阅读的纯文本。"""
+        text = str(content)
+        text = re.sub(r'<\s*br\s*/?\s*>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</\s*p\s*>', '\n\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'</\s*li\s*>', '\n', text, flags=re.IGNORECASE)
+        text = re.sub(r'<[^>]+>', '', text)
+        text = unescape(text)
+        lines = [line.strip() for line in text.splitlines()]
+        return '\n'.join(line for line in lines if line).strip()
+
+    def _format_markdown_content(self, content, level=4):
+        """格式化分析内容为Markdown。"""
+        if isinstance(content, dict):
+            lines = []
+            for key, value in content.items():
+                if isinstance(value, (dict, list)):
+                    lines.append(f"{'#' * level} {key}")
+                    lines.append(self._format_markdown_content(value, level + 1))
+                else:
+                    lines.append(f"- **{key}**: {self._html_fragment_to_markdown_text(value)}")
+            return '\n\n'.join(line for line in lines if line)
+
+        if isinstance(content, list):
+            return '\n'.join(f"- {self._html_fragment_to_markdown_text(item)}" for item in content)
+
+        return self._html_fragment_to_markdown_text(content)
+
+    def _append_markdown_table(self, lines, data):
+        lines.append("| 指标 | 数值 |")
+        lines.append("| --- | --- |")
+        for key, value in data.items():
+            clean_value = self._html_fragment_to_markdown_text(value).replace('|', '\\|')
+            lines.append(f"| {key} | {clean_value} |")
+
+    def generate_markdown_report(self):
+        """生成Markdown格式的可读分析报告。"""
+        tz = pytz.timezone('Asia/Shanghai')
+        current_time = datetime.now(tz).strftime('%Y年%m月%d日 %H时%M分%S秒')
+
+        lines = [
+            "# 股票技术分析报告",
+            "",
+            f"生成时间: {current_time}",
+            "",
+        ]
+
+        for code in self.stock_codes:
+            stock_name = self.get_stock_name(code)
+            lines.extend([f"## {stock_name} ({code}) 分析报告", ""])
+
+            if code not in self.data:
+                lines.extend([
+                    "### 数据获取失败",
+                    "",
+                    f"无法获取股票 {stock_name} ({code}) 的数据。",
+                    "",
+                    "请检查股票代码格式是否正确，例如 `sh600036`、`sz000001`。",
+                    "",
+                ])
+                continue
+
+            analysis_data = self._get_analysis_data(code)
+
+            lines.extend(["### 基础数据", ""])
+            self._append_markdown_table(lines, analysis_data.get("基础数据", {}))
+            lines.append("")
+
+            lines.extend(["### 技术分析建议", ""])
+            signals = analysis_data.get("技术分析建议", [])
+            if signals:
+                lines.extend(f"- {self._html_fragment_to_markdown_text(signal)}" for signal in signals)
+            else:
+                lines.append("- 暂无技术分析建议")
+            lines.append("")
+
+            indicators = analysis_data.get("技术指标", {})
+            if indicators:
+                lines.extend(["### 技术指标详情", ""])
+                for section_name, section_data in indicators.items():
+                    lines.extend([f"#### {section_name}", ""])
+                    self._append_markdown_table(lines, section_data)
+                    lines.append("")
+
+            ai_sections = analysis_data.get("AI分析结果", {})
+            if ai_sections:
+                lines.extend(["### 人工智能分析报告", ""])
+                for section_name, content in ai_sections.items():
+                    if section_name == "分析状态":
+                        continue
+                    lines.extend([f"#### {section_name}", ""])
+                    formatted_content = self._format_markdown_content(content)
+                    lines.extend([formatted_content or "暂无内容", ""])
+
+            lines.append("---")
+            lines.append("")
+
+        return '\n'.join(lines).rstrip() + '\n'
+
+    def _get_default_report_path(self):
+        """获取默认报告路径，按日期归档到public目录。"""
+        tz = pytz.timezone('Asia/Shanghai')
+        date_folder = datetime.now(tz).strftime('%Y-%m-%d')
+        return os.path.join('public', date_folder, 'index.html')
+
     def generate_html_report(self):
         """生成HTML格式的分析报告"""
         # 检查模板文件是否存在
@@ -867,7 +982,7 @@ class StockAnalyzer:
         stock_contents = []
         for code in self.stock_codes:
             if code in self.data:
-                analysis_data = self.generate_analysis_data(code)
+                analysis_data = self._get_analysis_data(code)
                 chart_base64 = self.plot_analysis(code)
                 stock_name = self.get_stock_name(code)
 
@@ -1041,7 +1156,7 @@ class StockAnalyzer:
         for code in self.stock_codes:
             stock_name = self.get_stock_name(code)
             if code in self.data:
-                analysis_data = self.generate_analysis_data(code)
+                analysis_data = self._get_analysis_data(code)
                 html_content += f"""
                 <div class="stock-container">
                     <h2>{stock_name} ({code})</h2>
@@ -1079,9 +1194,13 @@ class StockAnalyzer:
 
         return html_content
 
-    def run_analysis(self, output_path='public/index.html'):
+    def run_analysis(self, output_path=None, markdown_path=None):
         """运行分析并生成报告"""
         print("开始运行股票分析...")
+        self.analysis_cache = {}
+
+        if output_path is None:
+            output_path = self._get_default_report_path()
 
         # 获取数据
         print("步骤1: 获取股票数据")
@@ -1115,22 +1234,49 @@ class StockAnalyzer:
             with open(output_path, 'w', encoding='utf-8') as f:
                 f.write(html_report)
             print(f"分析报告已生成: {output_path}")
-            return output_path
         except Exception as e:
             print(f"写入报告文件时出错: {str(e)}")
             return None
+
+        if markdown_path is None:
+            markdown_path = f"{os.path.splitext(output_path)[0]}.md"
+
+        markdown_dir = os.path.dirname(markdown_path)
+        if markdown_dir and not os.path.exists(markdown_dir):
+            os.makedirs(markdown_dir)
+
+        print("步骤3: 生成Markdown报告")
+        try:
+            markdown_report = self.generate_markdown_report()
+            with open(markdown_path, 'w', encoding='utf-8') as f:
+                f.write(markdown_report)
+            print(f"Markdown报告已生成: {markdown_path}")
+            return output_path
+        except Exception as e:
+            print(f"生成或写入Markdown报告时出错: {str(e)}")
+            return output_path
 
 
 if __name__ == "__main__":
     # 正确的股票代码示例
     stock_info = {
-        '上证指数': 'sh000001'
+    #    '上证指数': 'sh000001',
+        '再升科技': 'sh603601',
+        '神剑股份': 'sz002361',
+        '航天发展': 'sz000547',
+        '北京文化': 'sz000802'
     }
 
     print("开始股票技术分析...")
     print(f"分析股票: {list(stock_info.keys())}")
 
     analyzer = StockAnalyzer(stock_info)
+    analyzer = StockAnalyzer(
+        stock_info, 
+        llm_api_key="sk-844750b2bee44f259d4ef0fb9e4fcfd4",
+        llm_base_url="https://api.deepseek.com",
+        llm_model="deepseek-v4-pro"
+    )
     report_path = analyzer.run_analysis()
 
     if report_path:

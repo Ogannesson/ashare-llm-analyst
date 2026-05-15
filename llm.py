@@ -3,6 +3,7 @@ import os
 from typing import Dict, Any, Optional
 
 import openai
+import httpx
 import pandas as pd
 from openai import OpenAI
 
@@ -367,7 +368,8 @@ class LLMAnalyzer:
         """
         self.client = OpenAI(
             api_key=api_key,
-            base_url=base_url
+            base_url=base_url,
+            http_client=httpx.Client()
         )
         self.model = model or os.environ.get('LLM_MODEL', '')
 
