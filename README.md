@@ -26,7 +26,7 @@ Ashare-LLM-Analyst 是一个A股市场的技术分析工具，通过[Ashare](htt
 
 1. 确保安装了所有必需的依赖项:
 ```bash
-pip install pandas numpy matplotlib pytz
+pip install -r requirements.txt
 ```
 
 2. 配置大语言模型API信息（两种方式）： 方式一：使用环境变量（推荐）

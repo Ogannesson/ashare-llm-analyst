@@ -1,0 +1,9 @@
+# Core runtime dependencies for Ashare-LLM-Analyst
+# Generated from actual imports in main.py / llm.py / Ashare.py / MyTT.py
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7
+plotly>=5.18
+pytz>=2023.3
+openai>=1.0
+requests>=2.31
